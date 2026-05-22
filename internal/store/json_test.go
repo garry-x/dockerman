@@ -47,9 +47,11 @@ func TestSaveAndLoad_RoundTrip(t *testing.T) {
 func TestGetByID_Found(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "containers.json")
 	s := NewJSONStore(path)
-	s.Save([]model.ContainerInfo{
+	if err := s.Save([]model.ContainerInfo{
 		{ID: "abc123", Name: "web", Image: "nginx"},
-	})
+	}); err != nil {
+		t.Fatalf("save failed: %v", err)
+	}
 
 	c, err := s.GetByID("abc123")
 	if err != nil {
@@ -63,9 +65,11 @@ func TestGetByID_Found(t *testing.T) {
 func TestGetByID_ByName(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "containers.json")
 	s := NewJSONStore(path)
-	s.Save([]model.ContainerInfo{
+	if err := s.Save([]model.ContainerInfo{
 		{ID: "abc123", Name: "web", Image: "nginx"},
-	})
+	}); err != nil {
+		t.Fatalf("save failed: %v", err)
+	}
 
 	c, err := s.GetByID("web")
 	if err != nil {

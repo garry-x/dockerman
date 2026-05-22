@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"net/http"
+	"time"
 
 	"dockerman/internal/docker"
 	"dockerman/internal/store"
@@ -26,6 +27,17 @@ func NewServer(host string, port int, dbPath string) *Server {
 	}
 }
 
+func recoveryMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if err := recover(); err != nil {
+				writeJSON(w, http.StatusInternalServerError, apiResponse{Success: false, Error: "internal server error"})
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (s *Server) Start() error {
 	dockerCli, err := docker.NewClient()
 	if err != nil {
@@ -36,7 +48,8 @@ func (s *Server) Start() error {
 
 	r := mux.NewRouter()
 
-	// Auth middleware identifies request source (localhost/container/remote)
+	// Recovery middleware must be first to catch panics in all handlers
+	r.Use(recoveryMiddleware)
 	r.Use(ContainerAuthMiddleware(s.dockerCli))
 
 	handler := NewHandler(s.dockerCli, s.store)
@@ -45,5 +58,14 @@ func (s *Server) Start() error {
 	addr := fmt.Sprintf("%s:%d", s.host, s.port)
 	fmt.Printf("Docker Manager HTTP server listening on %s\n", addr)
 	fmt.Printf("Database: %s\n", s.dbPath)
-	return http.ListenAndServe(addr, r)
+
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           r,
+		ReadTimeout:       10 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       30 * time.Second,
+	}
+	return srv.ListenAndServe()
 }

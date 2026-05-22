@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"dockerman/internal/docker"
@@ -29,7 +30,9 @@ func NewHandler(dockerCli *docker.Client, s *store.JSONStore) *Handler {
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		log.Printf("writeJSON encode error: %v", err)
+	}
 }
 
 func (h *Handler) RegisterRoutes(r *mux.Router) {
@@ -106,15 +109,9 @@ func (h *Handler) GetContainer(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]
 
 	// Container source can only view itself
-	if src := GetSourceType(r); src == SourceContainer {
-		myID := GetSourceContainerID(r)
-		if id != myID {
-			ctr, err := h.store.GetByID(id)
-			if err != nil || (ctr.ID != myID && ctr.Name != myID) {
-				writeJSON(w, http.StatusForbidden, apiResponse{Success: false, Error: "container can only view itself"})
-				return
-			}
-		}
+	if GetSourceType(r) == SourceContainer && id != GetSourceContainerID(r) {
+		writeJSON(w, http.StatusForbidden, apiResponse{Success: false, Error: "container can only view itself"})
+		return
 	}
 
 	ctr, err := h.store.GetByID(id)

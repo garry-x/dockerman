@@ -311,6 +311,8 @@ func NewRootCmd() *cobra.Command {
 		execCmd(),
 		inspectCmd(),
 		serveCmd(),
+		installSystemdCmd(),
+		uninstallSystemdCmd(),
 	)
 
 	return root

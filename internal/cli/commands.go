@@ -175,6 +175,47 @@ func stopCmd() *cobra.Command {
 	}
 }
 
+func restartCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "restart <id|all>",
+		Short: "Restart a container",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			dockerCli, err := getDockerClient()
+			if err != nil {
+				return err
+			}
+			defer dockerCli.Close()
+
+			jsonStore := store.NewJSONStore(dbPath)
+			ids, err := resolveIDs(dockerCli, jsonStore, args[0])
+			if err != nil {
+				return err
+			}
+
+			ctx := context.Background()
+			var failed int
+			for _, id := range ids {
+				if err := dockerCli.Stop(ctx, id); err != nil {
+					fmt.Fprintf(os.Stderr, "Failed to stop %s: %v\n", id, err)
+					failed++
+					continue
+				}
+				if err := dockerCli.Start(ctx, id); err != nil {
+					fmt.Fprintf(os.Stderr, "Failed to start %s: %v\n", id, err)
+					failed++
+					continue
+				}
+				fmt.Printf("Restarted container %s\n", id)
+			}
+			if failed > 0 {
+				return fmt.Errorf("failed to restart %d of %d container(s)", failed, len(ids))
+			}
+			return nil
+		},
+	}
+}
+
 func rmCmd() *cobra.Command {
 	var force bool
 
@@ -242,6 +283,30 @@ func execCmd() *cobra.Command {
 	}
 }
 
+func infoCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "info <id>",
+		Short: "Show container information from database",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			jsonStore := store.NewJSONStore(dbPath)
+			c, err := jsonStore.GetByID(args[0])
+			if err != nil {
+				return err
+			}
+			fmt.Printf("ID:     %s\n", c.ID)
+			fmt.Printf("Name:   %s\n", c.Name)
+			fmt.Printf("Image:  %s\n", c.Image)
+			fmt.Printf("Status: %s\n", c.Status)
+			fmt.Printf("Ports:  %s\n", strings.Join(c.Ports, ", "))
+			fmt.Printf("Labels: %v\n", c.Labels)
+			fmt.Printf("Created: %s\n", c.CreatedAt)
+			fmt.Printf("Scanned: %s\n", c.ScannedAt)
+			return nil
+		},
+	}
+}
+
 func inspectCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "inspect <id>",
@@ -289,7 +354,7 @@ func serveCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().IntVarP(&port, "port", "p", 8080, "Server port")
+	cmd.Flags().IntVarP(&port, "port", "p", 5001, "Server port")
 	cmd.Flags().StringVar(&host, "host", "0.0.0.0", "Server host")
 	return cmd
 }
@@ -307,12 +372,14 @@ func NewRootCmd() *cobra.Command {
 		listCmd(),
 		startCmd(),
 		stopCmd(),
+		restartCmd(),
 		rmCmd(),
 		execCmd(),
+		infoCmd(),
 		inspectCmd(),
 		serveCmd(),
-		installSystemdCmd(),
-		uninstallSystemdCmd(),
+		installCmd(),
+		uninstallCmd(),
 	)
 
 	return root

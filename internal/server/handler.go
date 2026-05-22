@@ -42,6 +42,7 @@ func (h *Handler) RegisterRoutes(r *mux.Router) {
 	// Read endpoints — open to all sources
 	r.HandleFunc("/api/v1/containers", h.ListContainers).Methods("GET")
 	r.HandleFunc("/api/v1/containers/{id}", h.GetContainer).Methods("GET")
+	r.HandleFunc("/api/v1/containers/{id}/info", h.InfoContainer).Methods("GET")
 
 	// Scan — localhost only
 	r.Handle("/api/v1/containers/scan", RequireLocalhost(http.HandlerFunc(h.Scan))).Methods("POST")
@@ -113,6 +114,17 @@ func (h *Handler) GetContainer(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, apiResponse{Success: false, Error: "container can only view itself"})
 		return
 	}
+
+	ctr, err := h.store.GetByID(id)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, apiResponse{Success: false, Error: err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, apiResponse{Success: true, Data: ctr})
+}
+
+func (h *Handler) InfoContainer(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
 
 	ctr, err := h.store.GetByID(id)
 	if err != nil {

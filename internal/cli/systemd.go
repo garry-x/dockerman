@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -10,27 +11,42 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func installSystemdCmd() *cobra.Command {
-	var bin string
+const (
+	defaultBinPath  = "/usr/local/bin/dockerman"
+	unitPath        = "/etc/systemd/system/dockerman.service"
+	serviceName     = "dockerman"
+)
+
+func installCmd() *cobra.Command {
 	var port int
 	var force bool
 	var noEnable bool
 
 	cmd := &cobra.Command{
-		Use:   "install-systemd",
-		Short: "Install dockerman as a systemd service",
+		Use:   "install",
+		Short: "Install dockerman systemd service",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if os.Geteuid() != 0 {
 				return fmt.Errorf("root privileges required; run with sudo")
 			}
 
-			if bin == "" {
-				exe, err := os.Executable()
-				if err != nil {
-					return fmt.Errorf("determine executable path: %w", err)
-				}
-				bin = exe
+			src, err := os.Executable()
+			if err != nil {
+				return fmt.Errorf("determine executable path: %w", err)
 			}
+
+			if err := copyFile(src, defaultBinPath); err != nil {
+				return fmt.Errorf("install binary to %s: %w", defaultBinPath, err)
+			}
+			fmt.Printf("Installed binary to %s\n", defaultBinPath)
+
+			if err := os.MkdirAll("/var/lib/dockerman", 0777); err != nil {
+				return fmt.Errorf("create data directory: %w", err)
+			}
+			if err := os.Chmod("/var/lib/dockerman", 0777); err != nil {
+				return fmt.Errorf("chmod data directory: %w", err)
+			}
+			fmt.Println("Set up data directory /var/lib/dockerman")
 
 			unit := fmt.Sprintf(`[Unit]
 Description=Docker Container Manager
@@ -39,28 +55,29 @@ Requires=docker.service
 
 [Service]
 Type=simple
-ExecStart=%s serve --port %d --db %s
+ExecStart=%s serve --port %d --db /var/lib/dockerman/containers.json
 Restart=always
 RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
-`, bin, port, dbPath)
+`, defaultBinPath, port)
 
-			unitPath := "/etc/systemd/system/dockerman.service"
-
-			// Check if file exists and prompt for overwrite
-			if _, err := os.Stat(unitPath); err == nil && !force {
-				fmt.Print("Overwrite? (y/N): ")
-				reader := bufio.NewReader(os.Stdin)
-				resp, err := reader.ReadString('\n')
-				if err != nil {
-					return fmt.Errorf("read input: %w", err)
-				}
-				resp = strings.TrimSpace(resp)
-				if strings.ToLower(resp) != "y" {
-					fmt.Println("Skipping installation.")
-					return nil
+			if _, err := os.Stat(unitPath); err == nil {
+				if force {
+					_ = runCommand("systemctl", "stop", serviceName)
+					fmt.Println("Stopped running dockerman service")
+				} else {
+					fmt.Print("Overwrite existing unit file? (y/N): ")
+					reader := bufio.NewReader(os.Stdin)
+					resp, err := reader.ReadString('\n')
+					if err != nil {
+						return fmt.Errorf("read input: %w", err)
+					}
+					if strings.ToLower(strings.TrimSpace(resp)) != "y" {
+						fmt.Println("Skipping installation.")
+						return nil
+					}
 				}
 			}
 
@@ -75,8 +92,8 @@ WantedBy=multi-user.target
 			fmt.Println("Ran systemctl daemon-reload")
 
 			if !noEnable {
-				if err := runCommand("systemctl", "enable", "dockerman"); err != nil {
-					return fmt.Errorf("enable dockerman: %w", err)
+				if err := runCommand("systemctl", "enable", serviceName); err != nil {
+					return fmt.Errorf("enable %s: %w", serviceName, err)
 				}
 				fmt.Println("Enabled dockerman service")
 			}
@@ -86,31 +103,26 @@ WantedBy=multi-user.target
 		},
 	}
 
-	cmd.Flags().StringVar(&bin, "bin", "", "Path to dockerman binary (default: uses os.Executable())")
-	cmd.Flags().IntVar(&port, "port", 8080, "API server port")
+	cmd.Flags().IntVar(&port, "port", 5001, "API server port")
 	cmd.Flags().BoolVar(&force, "force", false, "Skip overwrite prompt")
 	cmd.Flags().BoolVar(&noEnable, "no-enable", false, "Install unit but do not enable")
 
 	return cmd
 }
 
-func uninstallSystemdCmd() *cobra.Command {
+func uninstallCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "uninstall-systemd",
+		Use:   "uninstall",
 		Short: "Uninstall dockerman systemd service",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if os.Geteuid() != 0 {
 				return fmt.Errorf("root privileges required; run with sudo")
 			}
 
-			unitPath := "/etc/systemd/system/dockerman.service"
-
-			// Stop and disable (ignore errors if not running/enabled)
-			_ = runCommand("systemctl", "stop", "dockerman")
-			_ = runCommand("systemctl", "disable", "dockerman")
+			_ = runCommand("systemctl", "stop", serviceName)
+			_ = runCommand("systemctl", "disable", serviceName)
 			fmt.Println("Stopped and disabled dockerman service")
 
-			// Remove unit file
 			if err := os.Remove(unitPath); err != nil && !os.IsNotExist(err) {
 				return fmt.Errorf("remove unit file: %w", err)
 			}
@@ -121,10 +133,32 @@ func uninstallSystemdCmd() *cobra.Command {
 			}
 			fmt.Println("Ran systemctl daemon-reload")
 
+			if err := os.Remove(defaultBinPath); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("remove binary: %w", err)
+			}
+			fmt.Println("Removed", defaultBinPath)
+
 			fmt.Println("dockerman systemd service uninstalled successfully.")
 			return nil
 		},
 	}
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, in)
+	return err
 }
 
 func runCommand(name string, args ...string) error {

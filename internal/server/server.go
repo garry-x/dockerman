@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"time"
@@ -45,6 +46,22 @@ func (s *Server) Start() error {
 	}
 	s.dockerCli = dockerCli
 	s.store = store.NewJSONStore(s.dbPath)
+
+	containers, err := s.store.Load()
+	if err != nil {
+		return fmt.Errorf("load store: %w", err)
+	}
+	if len(containers) == 0 {
+		fmt.Println("Database is empty, running initial scan...")
+		containers, err = s.dockerCli.ScanAll(context.Background())
+		if err != nil {
+			return fmt.Errorf("initial scan: %w", err)
+		}
+		if err := s.store.Save(containers); err != nil {
+			return fmt.Errorf("initial scan save: %w", err)
+		}
+		fmt.Printf("Initial scan complete: %d container(s) found\n", len(containers))
+	}
 
 	r := mux.NewRouter()
 

@@ -28,7 +28,7 @@ func getDockerClient() (*docker.Client, error) {
 }
 
 func resolveIDs(dockerCli *docker.Client, jsonStore *store.JSONStore, arg string) ([]string, error) {
-	if arg == "all" {
+	if strings.ToLower(arg) == "all" {
 		containers, err := jsonStore.Load()
 		if err != nil {
 			return nil, fmt.Errorf("load store: %w", err)
@@ -122,11 +122,17 @@ func startCmd() *cobra.Command {
 			}
 
 			ctx := context.Background()
+			var failed int
 			for _, id := range ids {
 				if err := dockerCli.Start(ctx, id); err != nil {
-					return fmt.Errorf("start %s: %w", id, err)
+					fmt.Fprintf(os.Stderr, "Failed to start %s: %v\n", id, err)
+					failed++
+					continue
 				}
 				fmt.Printf("Started container %s\n", id)
+			}
+			if failed > 0 {
+				return fmt.Errorf("failed to start %d of %d container(s)", failed, len(ids))
 			}
 			return nil
 		},
@@ -152,11 +158,17 @@ func stopCmd() *cobra.Command {
 			}
 
 			ctx := context.Background()
+			var failed int
 			for _, id := range ids {
 				if err := dockerCli.Stop(ctx, id); err != nil {
-					return fmt.Errorf("stop %s: %w", id, err)
+					fmt.Fprintf(os.Stderr, "Failed to stop %s: %v\n", id, err)
+					failed++
+					continue
 				}
 				fmt.Printf("Stopped container %s\n", id)
+			}
+			if failed > 0 {
+				return fmt.Errorf("failed to stop %d of %d container(s)", failed, len(ids))
 			}
 			return nil
 		},
@@ -184,11 +196,17 @@ func rmCmd() *cobra.Command {
 			}
 
 			ctx := context.Background()
+			var failed int
 			for _, id := range ids {
 				if err := dockerCli.Remove(ctx, id, force); err != nil {
-					return fmt.Errorf("remove %s: %w", id, err)
+					fmt.Fprintf(os.Stderr, "Failed to remove %s: %v\n", id, err)
+					failed++
+					continue
 				}
 				fmt.Printf("Removed container %s\n", id)
+			}
+			if failed > 0 {
+				return fmt.Errorf("failed to remove %d of %d container(s)", failed, len(ids))
 			}
 			return nil
 		},
@@ -265,6 +283,7 @@ func serveCmd() *cobra.Command {
 		Use:   "serve",
 		Short: "Start the HTTP API server",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			fmt.Printf("API server listening on %s:%d\n", host, port)
 			srv := server.NewServer(host, port, dbPath)
 			return srv.Start()
 		},

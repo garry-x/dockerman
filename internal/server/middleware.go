@@ -13,8 +13,10 @@ import (
 type contextKey string
 
 const (
-	ctxSourceType  contextKey = "source_type"
-	ctxContainerID contextKey = "container_id"
+	ctxSourceType    contextKey = "source_type"
+	ctxContainerID   contextKey = "container_id"
+	ctxContainerName contextKey = "container_name"
+	ctxRemoteIP      contextKey = "remote_ip"
 )
 
 type SourceType int
@@ -25,7 +27,7 @@ const (
 	SourceRemote
 )
 
-func ContainerAuthMiddleware(dockerCli *docker.Client) mux.MiddlewareFunc {
+func ContainerAuthMiddleware(dockerCli *docker.Client, authToken string) mux.MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ip, _, _ := net.SplitHostPort(r.RemoteAddr)
@@ -33,16 +35,24 @@ func ContainerAuthMiddleware(dockerCli *docker.Client) mux.MiddlewareFunc {
 				ip = r.RemoteAddr
 			}
 
+			r = r.WithContext(context.WithValue(r.Context(), ctxRemoteIP, ip))
+
 			if ip == "127.0.0.1" || ip == "::1" {
+				if authToken != "" && r.Header.Get("X-Dockerman-Token") != authToken {
+					ctx := context.WithValue(r.Context(), ctxSourceType, SourceRemote)
+					next.ServeHTTP(w, r.WithContext(ctx))
+					return
+				}
 				ctx := context.WithValue(r.Context(), ctxSourceType, SourceLocalhost)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
 
-			containerID, err := dockerCli.FindContainerByIP(r.Context(), ip)
+			containerID, containerName, err := dockerCli.FindContainerByIP(r.Context(), ip)
 			if err == nil && containerID != "" {
 				ctx := context.WithValue(r.Context(), ctxSourceType, SourceContainer)
 				ctx = context.WithValue(ctx, ctxContainerID, containerID)
+				ctx = context.WithValue(ctx, ctxContainerName, containerName)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
@@ -66,6 +76,20 @@ func GetSourceContainerID(r *http.Request) string {
 	return v
 }
 
+func GetSourceContainerName(r *http.Request) string {
+	v, _ := r.Context().Value(ctxContainerName).(string)
+	return v
+}
+
+func GetRemoteIP(r *http.Request) string {
+	v, _ := r.Context().Value(ctxRemoteIP).(string)
+	return v
+}
+
+func isSelfContainer(r *http.Request, targetID string) bool {
+	return targetID == GetSourceContainerID(r) || targetID == GetSourceContainerName(r)
+}
+
 // RequireWriteAccess checks permissions at request time. Extracts {id} from mux.Vars(r).
 func RequireWriteAccess(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -76,8 +100,7 @@ func RequireWriteAccess(next http.Handler) http.Handler {
 		case SourceLocalhost:
 			next.ServeHTTP(w, r)
 		case SourceContainer:
-			myID := GetSourceContainerID(r)
-			if targetID == myID || targetID == "" {
+			if isSelfContainer(r, targetID) || targetID == "" {
 				next.ServeHTTP(w, r)
 			} else {
 				writeJSON(w, http.StatusForbidden, apiResponse{Success: false, Error: "container can only operate on itself"})

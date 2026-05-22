@@ -133,10 +133,10 @@ func (c *Client) Inspect(ctx context.Context, id string) (types.ContainerJSON, e
 	return info, nil
 }
 
-func (c *Client) FindContainerByIP(ctx context.Context, ip string) (string, error) {
+func (c *Client) FindContainerByIP(ctx context.Context, ip string) (id, name string, err error) {
 	containers, err := c.cli.ContainerList(ctx, container.ListOptions{All: false})
 	if err != nil {
-		return "", fmt.Errorf("list containers for IP lookup: %w", err)
+		return "", "", fmt.Errorf("list containers for IP lookup: %w", err)
 	}
 	for _, ctr := range containers {
 		info, err := c.cli.ContainerInspect(ctx, ctr.ID)
@@ -148,11 +148,15 @@ func (c *Client) FindContainerByIP(ctx context.Context, ip string) (string, erro
 		}
 		for _, net := range info.NetworkSettings.Networks {
 			if net.IPAddress == ip {
-				return ctr.ID[:12], nil
+				ctrName := ""
+				if len(ctr.Names) > 0 {
+					ctrName = strings.TrimPrefix(ctr.Names[0], "/")
+				}
+				return ctr.ID[:12], ctrName, nil
 			}
 		}
 	}
-	return "", nil
+	return "", "", nil
 }
 
 func (c *Client) Close() error {

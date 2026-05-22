@@ -90,16 +90,23 @@ func (h *Handler) ListContainers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Container source: filter to self only
-	if src := GetSourceType(r); src == SourceContainer {
+	src := GetSourceType(r)
+	if src == SourceContainer {
 		myID := GetSourceContainerID(r)
+		myName := GetSourceContainerName(r)
 		filtered := make([]model.ContainerInfo, 0)
 		for _, c := range containers {
-			if c.ID == myID || c.Name == myID {
+			if c.ID == myID || c.Name == myID || c.Name == myName {
 				filtered = append(filtered, c)
 			}
 		}
 		writeJSON(w, http.StatusOK, apiResponse{Success: true, Data: filtered})
+		return
+	}
+
+	// Unauthenticated localhost (host-network containers without token)
+	if src == SourceRemote && isLocalhostIP(r) {
+		writeJSON(w, http.StatusForbidden, apiResponse{Success: false, Error: "access denied"})
 		return
 	}
 
@@ -109,9 +116,8 @@ func (h *Handler) ListContainers(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) GetContainer(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]
 
-	// Container source can only view itself
-	if GetSourceType(r) == SourceContainer && id != GetSourceContainerID(r) {
-		writeJSON(w, http.StatusForbidden, apiResponse{Success: false, Error: "container can only view itself"})
+	if !h.authorizeContainerRead(r, id) {
+		writeJSON(w, http.StatusForbidden, apiResponse{Success: false, Error: "access denied"})
 		return
 	}
 
@@ -126,12 +132,34 @@ func (h *Handler) GetContainer(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) InfoContainer(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]
 
+	if !h.authorizeContainerRead(r, id) {
+		writeJSON(w, http.StatusForbidden, apiResponse{Success: false, Error: "access denied"})
+		return
+	}
+
 	ctr, err := h.store.GetByID(id)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, apiResponse{Success: false, Error: err.Error()})
 		return
 	}
 	writeJSON(w, http.StatusOK, apiResponse{Success: true, Data: ctr})
+}
+
+func (h *Handler) authorizeContainerRead(r *http.Request, id string) bool {
+	src := GetSourceType(r)
+	switch src {
+	case SourceLocalhost:
+		return true
+	case SourceContainer:
+		return isSelfContainer(r, id)
+	default:
+		return !isLocalhostIP(r)
+	}
+}
+
+func isLocalhostIP(r *http.Request) bool {
+	ip := GetRemoteIP(r)
+	return ip == "127.0.0.1" || ip == "::1"
 }
 
 func (h *Handler) StartContainer(w http.ResponseWriter, r *http.Request) {

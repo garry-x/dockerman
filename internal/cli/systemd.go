@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bufio"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -15,6 +17,7 @@ const (
 	defaultBinPath  = "/usr/local/bin/dockerman"
 	unitPath        = "/etc/systemd/system/dockerman.service"
 	serviceName     = "dockerman"
+	authTokenPath   = "/var/lib/dockerman/auth"
 )
 
 func installCmd() *cobra.Command {
@@ -28,6 +31,26 @@ func installCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if os.Geteuid() != 0 {
 				return fmt.Errorf("root privileges required; run with sudo")
+			}
+
+			// Stop existing service before overwriting binary
+			if _, err := os.Stat(unitPath); err == nil {
+				if force {
+					_ = runCommand("systemctl", "stop", serviceName)
+					fmt.Println("Stopped running dockerman service")
+				} else {
+					fmt.Print("Overwrite existing installation? (y/N): ")
+					reader := bufio.NewReader(os.Stdin)
+					resp, err := reader.ReadString('\n')
+					if err != nil {
+						return fmt.Errorf("read input: %w", err)
+					}
+					if strings.ToLower(strings.TrimSpace(resp)) != "y" {
+						fmt.Println("Skipping installation.")
+						return nil
+					}
+					_ = runCommand("systemctl", "stop", serviceName)
+				}
 			}
 
 			src, err := os.Executable()
@@ -48,6 +71,11 @@ func installCmd() *cobra.Command {
 			}
 			fmt.Println("Set up data directory /var/lib/dockerman")
 
+			token, err := readOrGenerateToken()
+			if err != nil {
+				return fmt.Errorf("auth token: %w", err)
+			}
+
 			unit := fmt.Sprintf(`[Unit]
 Description=Docker Container Manager
 After=docker.service network.target
@@ -55,31 +83,14 @@ Requires=docker.service
 
 [Service]
 Type=simple
+Environment=DOCKERMAN_AUTH_TOKEN=%s
 ExecStart=%s serve --port %d --db /var/lib/dockerman/containers.json
 Restart=always
 RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
-`, defaultBinPath, port)
-
-			if _, err := os.Stat(unitPath); err == nil {
-				if force {
-					_ = runCommand("systemctl", "stop", serviceName)
-					fmt.Println("Stopped running dockerman service")
-				} else {
-					fmt.Print("Overwrite existing unit file? (y/N): ")
-					reader := bufio.NewReader(os.Stdin)
-					resp, err := reader.ReadString('\n')
-					if err != nil {
-						return fmt.Errorf("read input: %w", err)
-					}
-					if strings.ToLower(strings.TrimSpace(resp)) != "y" {
-						fmt.Println("Skipping installation.")
-						return nil
-					}
-				}
-			}
+`, token, defaultBinPath, port)
 
 			if err := os.WriteFile(unitPath, []byte(unit), 0644); err != nil {
 				return fmt.Errorf("write unit file: %w", err)
@@ -97,6 +108,11 @@ WantedBy=multi-user.target
 				}
 				fmt.Println("Enabled dockerman service")
 			}
+
+			if err := runCommand("systemctl", "start", serviceName); err != nil {
+				return fmt.Errorf("start %s: %w", serviceName, err)
+			}
+			fmt.Println("Started dockerman service")
 
 			fmt.Println("dockerman systemd service installed successfully.")
 			return nil
@@ -138,10 +154,39 @@ func uninstallCmd() *cobra.Command {
 			}
 			fmt.Println("Removed", defaultBinPath)
 
+			_ = os.Remove(authTokenPath)
+
 			fmt.Println("dockerman systemd service uninstalled successfully.")
 			return nil
 		},
 	}
+}
+
+func readOrGenerateToken() (string, error) {
+	if data, err := os.ReadFile(authTokenPath); err == nil {
+		token := strings.TrimSpace(string(data))
+		if token != "" {
+			fmt.Printf("Using existing auth token from %s\n", authTokenPath)
+			return token, nil
+		}
+	}
+	token, err := generateToken()
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(authTokenPath, []byte(token+"\n"), 0644); err != nil {
+		return "", fmt.Errorf("write auth token: %w", err)
+	}
+	fmt.Printf("Wrote auth token to %s\n", authTokenPath)
+	return token, nil
+}
+
+func generateToken() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }
 
 func copyFile(src, dst string) error {

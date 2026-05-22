@@ -105,7 +105,7 @@ func listCmd() *cobra.Command {
 
 func startCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "start <id|all>",
+		Use:   "start <id|name|all>",
 		Short: "Start a container",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -141,7 +141,7 @@ func startCmd() *cobra.Command {
 
 func stopCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "stop <id|all>",
+		Use:   "stop <id|name|all>",
 		Short: "Stop a container",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -177,7 +177,7 @@ func stopCmd() *cobra.Command {
 
 func restartCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "restart <id|all>",
+		Use:   "restart <id|name|all>",
 		Short: "Restart a container",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -220,7 +220,7 @@ func rmCmd() *cobra.Command {
 	var force bool
 
 	cmd := &cobra.Command{
-		Use:   "rm <id|all>",
+		Use:   "rm <id|name|all>",
 		Short: "Remove a container",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -259,7 +259,7 @@ func rmCmd() *cobra.Command {
 
 func execCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "exec <id> <command...>",
+		Use:   "exec <id|name> <command...>",
 		Short: "Execute a command in a container",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -285,7 +285,7 @@ func execCmd() *cobra.Command {
 
 func infoCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "info <id>",
+		Use:   "info <id|name>",
 		Short: "Show container information from database",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -309,7 +309,7 @@ func infoCmd() *cobra.Command {
 
 func inspectCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "inspect <id>",
+		Use:   "inspect <id|name>",
 		Short: "Inspect a container",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

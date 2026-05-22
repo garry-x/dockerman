@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -182,11 +183,14 @@ func (h *Handler) StopContainer(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) RestartContainer(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]
-	if err := h.dockerCli.Stop(r.Context(), id); err != nil {
+	// Use background context so Docker operations survive client disconnect
+	// (e.g. container stopping itself breaks the HTTP connection)
+	bgCtx := context.Background()
+	if err := h.dockerCli.Stop(bgCtx, id); err != nil {
 		writeJSON(w, http.StatusInternalServerError, apiResponse{Success: false, Error: err.Error()})
 		return
 	}
-	if err := h.dockerCli.Start(r.Context(), id); err != nil {
+	if err := h.dockerCli.Start(bgCtx, id); err != nil {
 		writeJSON(w, http.StatusInternalServerError, apiResponse{Success: false, Error: err.Error()})
 		return
 	}
